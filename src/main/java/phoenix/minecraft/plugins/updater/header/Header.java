@@ -10,7 +10,6 @@ package phoenix.minecraft.plugins.updater.header;
  * @author jdcs_dev
  */
 public class Header {
-
     public static String protocol = "http";
 
     public static String HOST = "94.75.150.137";

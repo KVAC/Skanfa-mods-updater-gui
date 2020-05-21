@@ -20,12 +20,11 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import phoenix.minecraft.plugins.updater.header.Header;
 
 public class Gui extends JFrame {
 
     private static final long serialVersionUID = 1L;
-
-    String SiteModeLink = "http://skanfa.asuscomm.com/mods/mods/";
 
     private String OS = (System.getProperty("os.name")).toUpperCase();
 
@@ -47,18 +46,19 @@ public class Gui extends JFrame {
             public void actionPerformed(ActionEvent e) {
                 new Thread(new Runnable() {
 
+                    @Override
                     public void run() {
                         btnNewButton.setEnabled(false);
 
                         try {
                             ta_error.setText("");
                             ta_msg.setText("");
-                            URL listModesUrl = new URL(SiteModeLink);
+                            URL listModesUrl = new URL(Header.SiteModeLink);
 
                             Document document = Jsoup.connect(listModesUrl.toString()).get();
                             Elements links = document.select("a[href]");
 
-                            ArrayList<String> urls = new ArrayList<String>();
+                            ArrayList<String> urls = new ArrayList<>();
 
                             for (Element link : links) {
                                 String fileName = link.attr("href");

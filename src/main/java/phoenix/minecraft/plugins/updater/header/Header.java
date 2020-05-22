@@ -10,11 +10,12 @@ package phoenix.minecraft.plugins.updater.header;
  * @author jdcs_dev
  */
 public class Header {
+
     public static String protocol = "http";
 
-    public static String HOST = "94.75.150.137";
+    public static String HOST = "skanfa.theworkpc.com";
     public static String dir = "/mods/mods/";
-    
+
     public static String SiteModeLink = protocol + "://" + HOST + dir;
 
 }

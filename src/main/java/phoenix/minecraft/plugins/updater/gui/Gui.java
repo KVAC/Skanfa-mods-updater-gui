@@ -2,17 +2,24 @@ package phoenix.minecraft.plugins.updater.gui;
 
 import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SpringLayout;
+import lombok.Getter;
+import lombok.Setter;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -22,16 +29,229 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 import phoenix.minecraft.plugins.updater.header.Header;
 
+/**
+ * for (Map.Entry<?, ?> e : System.getProperties().entrySet()) {
+ * System.out.println(String.format("%s = %s", e.getKey(), e.getValue())); }
+ */
 public class Gui extends JFrame {
 
     private static final long serialVersionUID = 1L;
 
-    private String OS = (System.getProperty("os.name")).toUpperCase();
-
-    JTextArea ta_error;
+    static JTextArea ta_error;
     static JTextArea ta_msg;
 
+    boolean debug = false;
+
+    static CopyOnWriteArrayList<String> flansFileUrls = new CopyOnWriteArrayList<>();
+
+    public static void followWebDir(URL url) throws IOException {
+        //  System.out.println("followWebDir for : " + url);
+        Document doc = Jsoup.connect(url.toString()).get();
+        Elements selected = doc.select("a[href]");
+
+        for (Element file : selected) {
+            String item = file.attr("href");
+            if (item.contains(";")) {
+                continue;
+            }
+            if (item.startsWith("/")) {
+                continue;
+            }
+            if (item.toLowerCase().endsWith("/")) {
+                String fullpath = url.toString() + item;
+                followWebDir(new URL(fullpath));
+            } else {
+                String fullpath = url.toString() + item;
+                flansFileUrls.add(fullpath);
+            }
+        }
+    }
+
+    private void clearMessages() {
+        ta_error.setText("");
+        ta_msg.setText("");
+    }
+
+    private void installFlans() {
+
+        //FLANS
+        try {
+            URL url = new URL(Header.flans);
+            followWebDir(url);
+
+            flansFileUrls.forEach((fullpath) -> {
+                try {
+                    String forlocal = fullpath.replace(Header.flans, "");
+
+                    RemoteLocaleFilePair rlfp = new RemoteLocaleFilePair();
+                    rlfp.setRoot(Header.minecarftFlansDir);
+                    rlfp.setRemote(new URL(fullpath));
+                    rlfp.setLocaleFile(new File(rlfp.getRoot(), forlocal));
+
+                    if (!rlfp.localeFile.exists()) {
+                        File parent = rlfp.getLocaleFile().getParentFile();
+                        if (!parent.exists()) {
+                            parent.mkdirs();
+                        }
+                        try {
+                            FileUtils.copyURLToFile(
+                                    rlfp.remote,
+                                    rlfp.localeFile,
+                                    30000,
+                                    30000);
+                            String msg = rlfp.remote + " загружен";
+                            System.out.println(msg);
+                            ta_msg.append(msg + "\n");
+                        } catch (IOException ex) {
+                            Logger.getLogger(Gui.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    } else {
+                        System.out.println("Flans pack: " + rlfp.localeFile + " уже установлен");
+                    }
+                } catch (MalformedURLException e) {
+                    e.printStackTrace();
+                }
+            });
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        //FLANS
+
+    }
+
+    private void complete() {
+        String msg_complete;
+        if (ta_error.getText().isEmpty()) {
+            msg_complete = "Установка mods завершена без ошибок";
+        } else {
+            msg_complete = "Установка mods завершена c ошибками (смотрите справа)";
+
+        }
+        // output
+        System.out.println(msg_complete);
+        ta_msg.append('\n' + msg_complete);
+    }
+
+    class RemoteLocaleFilePair {
+
+        @Getter
+        @Setter
+        private URL remote;
+        @Getter
+        @Setter
+        private File root;
+        @Getter
+        @Setter
+        private File localeFile;
+
+    }
+
+    public static void initDirs() {
+        if (Header.OS.contains("WIN")) {
+            Header.workingDirectory = System.getenv("AppData");
+            File tmpFile = new File(Header.workingDirectory);
+            Header.minecarftDir = new File(tmpFile, ".minecraft");
+        } else {
+            Header.workingDirectory = System.getProperty("user.home");
+            Header.minecarftDir = new File(Header.workingDirectory, ".minecraft");
+        }
+        Header.minecarftModsDir = new File(Header.minecarftDir, "mods");
+        Header.minecarftFlansDir = new File(Header.minecarftDir, "Flan");
+
+        if (!Header.minecarftFlansDir.exists()) {
+            Header.minecarftFlansDir.mkdirs();
+        }
+        if (!Header.minecarftModsDir.exists()) {
+            Header.minecarftModsDir.mkdirs();
+        }
+    }
+
+    public static void installMods() {
+        //MODS
+        try {
+            URL listModesUrl = new URL(Header.mods);
+            Document document = Jsoup.connect(listModesUrl.toString()).get();
+            Elements links = document.select("a[href]");
+            ArrayList<String> urls = new ArrayList<>();
+            for (Element link : links) {
+                String fileName = link.attr("href");
+                if (new File(fileName).getName().endsWith(".jar")) {
+                    String url = listModesUrl + fileName;
+                    urls.add(url);
+                }
+            }
+            File[] localMods = Header.minecarftModsDir.listFiles();
+            removeNotContains(localMods, urls);
+            back:
+            {
+                for (final String url : urls) {
+                    final File fileToSave = new File(Header.minecarftModsDir, new File(url).getName());
+                    if (!fileToSave.exists()) {
+                        try {
+                            Thread.currentThread().setName(url + " ---> " + fileToSave.getName());
+                            URL urlToDownload = new URL(url);
+
+                            FileUtils.copyURLToFile(urlToDownload, fileToSave, 10000, 5000);
+                            String msg = "\n" + urlToDownload + " загружен";
+                            ta_msg.append(msg);
+                            System.out.println(msg.replaceAll("\n", ""));
+                        } catch (Exception e2) {
+                            ta_error.append("\n" + "FILE:" + fileToSave
+                                    + "не коррекно загружен(повторите снова)" + '\n' + ExceptionUtils.getStackTrace(e2));
+                            fileToSave.delete();
+                            e2.printStackTrace();
+                            break back;
+                        }
+                    }
+                }
+            }
+        } catch (IOException e3) {
+            ta_error.append('\n' + ExceptionUtils.getStackTrace(e3));
+            e3.printStackTrace();
+        }
+
+    }
+
+    public static void printCheckBanner() {
+        File minecraftdir = Header.minecarftDir;
+
+        String msg1 = "minecarftDir:" + minecraftdir.getAbsolutePath() + ":"
+                + minecraftdir.exists() + '\n';
+        String msg2_mods = "ModsDir:" + Header.minecarftModsDir.getAbsolutePath() + ":"
+                + Header.minecarftModsDir.exists() + '\n';
+        String msg2_flans = "FlansPackDir:" + Header.minecarftFlansDir.getAbsolutePath() + ":"
+                + Header.minecarftFlansDir.exists() + '\n';
+
+        String msg3 = "######################\n";
+
+        ta_msg.append("OS:" + Header.OS + '\n');
+        System.err.println(msg1);
+        ta_msg.append(msg1);
+        System.err.println(msg2_mods);
+        ta_msg.append(msg2_mods);
+
+        System.err.println(msg2_flans);
+        ta_msg.append(msg2_flans);
+
+        System.err.println(msg3);
+        ta_msg.append(msg3);
+    }
+
     public Gui() {
+
+        if (debug) {
+            Header header = new Header();
+            Field[] field = header.getClass().getFields();
+            try {
+                for (Field field1 : field) {
+                    System.out.println(field1.getName() + "\t:\t" + header.getClass().getField(field1.getName()).get(header));
+                }
+            } catch (IllegalAccessException | IllegalArgumentException | NoSuchFieldException | SecurityException e) {
+                e.printStackTrace();
+            }
+        }
+
         setBounds(new Rectangle(800, 420));
         setResizable(true);
         setTitle("Установщик модов Skanfa");
@@ -41,116 +261,27 @@ public class Gui extends JFrame {
         getContentPane().setLayout(springLayout);
 
         final JButton btnNewButton = new JButton("Установить");
-        btnNewButton.addActionListener(new ActionListener() {
+        btnNewButton.addActionListener((ActionEvent e) -> {
+            new Thread(() -> {
+                btnNewButton.setEnabled(false);
+                try {
 
-            public void actionPerformed(ActionEvent e) {
-                new Thread(new Runnable() {
+                    initDirs();
+                    clearMessages();
+                    printCheckBanner();
 
-                    @Override
-                    public void run() {
-                        btnNewButton.setEnabled(false);
+                    installFlans();
+                    installMods();
 
-                        try {
-                            ta_error.setText("");
-                            ta_msg.setText("");
-                            URL listModesUrl = new URL(Header.SiteModeLink);
+                    complete();
 
-                            Document document = Jsoup.connect(listModesUrl.toString()).get();
-                            Elements links = document.select("a[href]");
-
-                            ArrayList<String> urls = new ArrayList<>();
-
-                            for (Element link : links) {
-                                String fileName = link.attr("href");
-                                if (new File(fileName).getName().endsWith(".jar")) {
-                                    String url = listModesUrl + fileName;
-                                    urls.add(url);
-                                }
-                            }
-
-                            /*
-							 * for (Map.Entry<?, ?> e : System.getProperties().entrySet()) {
-							 * System.out.println(String.format("%s = %s", e.getKey(), e.getValue())); }
-                             */
-                            String workingDirectory;
-                            File minecarftDir = null;
-                            final File minecarftModsDir;
-
-                            if (OS.contains("WIN")) {
-
-                                workingDirectory = System.getenv("AppData");
-
-                                File tmpFile = new File(workingDirectory);
-                                // tmpFile = new File(tmpFile, "Roaming"); // Roaming
-
-                                minecarftDir = new File(tmpFile, ".minecraft");
-                            } else {
-                                workingDirectory = System.getProperty("user.home");
-                                minecarftDir = new File(workingDirectory, ".minecraft");
-                            }
-                            ta_msg.append("OS:" + OS + '\n');
-
-                            minecarftModsDir = new File(minecarftDir, "mods");
-                            if (!minecarftModsDir.exists()) {
-                                minecarftModsDir.mkdirs();
-                            }
-
-                            String msg1 = "minecarftDir:" + minecarftDir.getAbsolutePath() + ":"
-                                    + minecarftDir.exists();
-                            String msg2 = "ModsDir:" + minecarftModsDir.getAbsolutePath() + ":"
-                                    + minecarftModsDir.exists();
-                            System.err.println(msg1);
-                            ta_msg.append(msg1 + '\n');
-                            System.err.println(msg2);
-                            ta_msg.append(msg2 + '\n');
-
-                            ta_msg.append("######################\n");
-                            File[] localMods = minecarftModsDir.listFiles();
-                            removeNotContains(localMods, urls);
-
-                            back:
-                            {
-                                for (final String url : urls) {
-                                    final File fileToSave = new File(minecarftModsDir, new File(url).getName());
-
-                                    if (!fileToSave.exists()) {
-                                        try {
-                                            Thread.currentThread().setName(url + " ---> " + fileToSave.getName());
-
-                                            FileUtils.copyURLToFile(new URL(url), fileToSave, 10000, 5000);
-                                            String msg = '\n' + fileToSave.getName() + " загружен";
-                                            ta_msg.append(msg);
-                                            System.out.println(msg.replaceAll("\n", ""));
-                                        } catch (Exception e) {
-                                            ta_error.append("\n" + "FILE:" + fileToSave
-                                                    + "не коррекно загружен(повторите снова)" + '\n'
-                                                    + ExceptionUtils.getStackTrace(e));
-                                            fileToSave.delete();
-                                            e.printStackTrace();
-                                            break back;
-                                        }
-                                    }
-                                }
-                            }
-                            String msg_complete;
-                            if (ta_error.getText().isEmpty()) {
-                                msg_complete = "Установка завершена без ошибок";
-                            } else {
-                                msg_complete = "Установка завершена c ошибками (смотрите справа)";
-
-                            }
-                            // output
-                            System.out.println(msg_complete);
-                            ta_msg.append('\n' + msg_complete);
-                        } catch (Exception e1) {
-                            ta_error.append('\n' + ExceptionUtils.getStackTrace(e1));
-                            e1.printStackTrace();
-                        }
-                        btnNewButton.setEnabled(true);
-                    }
-                }).start();
-            }
+                } catch (Exception e1) {
+                    e1.printStackTrace();
+                }
+                btnNewButton.setEnabled(true);
+            }).start();
         });
+
         springLayout.putConstraint(SpringLayout.NORTH, btnNewButton, 54, SpringLayout.NORTH, getContentPane());
         springLayout.putConstraint(SpringLayout.WEST, btnNewButton, 224, SpringLayout.WEST, getContentPane());
         getContentPane().add(btnNewButton);
@@ -193,8 +324,7 @@ public class Gui extends JFrame {
     }
 
     public static void removeNotContains(File[] localMods, ArrayList<String> urls) {
-        for (int i = 0; i < localMods.length; i++) {
-            File file = localMods[i];
+        for (File file : localMods) {
             if (!fileContainInList(file, urls)) {
                 file.delete();
             }
@@ -205,7 +335,7 @@ public class Gui extends JFrame {
         for (String string : urls) {
             String nameString = new File(string).getName();
             if (file.getName().equals(nameString)) {
-                String msg = nameString + " уже установлен";
+                String msg = "mod: " + file.getAbsolutePath() + " уже установлен";
                 System.out.println(msg);
                 ta_msg.append(msg + '\n');
                 return true;
